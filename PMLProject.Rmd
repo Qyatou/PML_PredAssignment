@@ -1,4 +1,5 @@
-#Practical Machine Learing/ Prediction Assignment
+#Practical Machine Learning
+#Prediction Assignment
 
 ####*Gregory Roberts*
 ####*23 December 2016*
