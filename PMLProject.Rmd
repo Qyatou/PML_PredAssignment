@@ -1,0 +1,189 @@
+#Practical Machine Learing/ Prediction Assignment
+
+####*Gregory Roberts*
+####*23 December 2016*
+
+
+##Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The objective, in this project, is to use the data to predict the manner in which the participants accomplished the exercises.
+
+###Data
+Download and load the data.
+
+```{r}
+setwd("C:\\Coursera\\PracMachLearn")
+
+if(!file.exists("pml-training.csv")){
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "./pml-training.csv")    
+}
+if(!file.exists("pml-testing.csv")){
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "./pml-testing.csv")    
+}
+
+trainingOriginal = read.csv("pml-training.csv", na.strings=c("", "NA", "NULL"))
+testingOriginal = read.csv("pml-testing.csv", na.strings=c("", "NA", "NULL"))
+#dim(trainingOriginal)
+```
+
+###Load libraries
+
+```{r}
+suppressWarnings(library(caret))
+suppressWarnings(library(tree))
+suppressWarnings(library(caret))
+suppressWarnings(library(rattle))
+suppressWarnings(suppressMessages(library(randomForest)))
+```
+
+###Removing NA and extraneous data
+
+Remove variables that have an excess number of NA values.
+```{r}
+training_na <- trainingOriginal[ , colSums(is.na(trainingOriginal)) == 0]
+dim(training_na)
+```
+
+Remove extraneous variables that are unrelated to dependent variable.
+```{r}
+extraneous = c('X', 'user_name', 'raw_timestamp_part_1', 'raw_timestamp_part_2', 'cvtd_timestamp', 'new_window', 'num_window')
+training_ext <- training_na[, -which(names(training_na) %in% extraneous)]
+dim(training_ext)
+```
+
+Check variables that have low variance.
+```{r}
+nZV= nearZeroVar(training_ext[sapply(training_ext, is.numeric)], saveMetrics = TRUE)
+training_nzv = training_ext[,nZV[, 'nzv']==0]
+dim(training_nzv)
+```
+
+Removing correlated variables.
+```{r}
+cor_matrix <- cor(na.omit(training_nzv[sapply(training_nzv, is.numeric)]))
+dim(cor_matrix)
+
+corr_dataframe <- expand.grid(row = 1:52, col = 1:52)
+corr_dataframe$corr <- as.vector(cor_matrix)
+levelplot(corr ~ row+ col, corr_dataframe)
+```
+
+Remove variables with high correlation.
+```{r}
+remove_corr = findCorrelation(cor_matrix, cutoff = .90, verbose = TRUE)
+training_corr = training_nzv[,-remove_corr]
+dim(training_corr)
+```
+
+Returns 19622 samples and 46 variable.
+
+###Cross validate training and testing data
+```{r}
+training_dataPart <- createDataPartition(y=training_corr$classe, p=0.7, list=FALSE)
+training <- training_corr[training_dataPart,]; testing <- training_corr[-training_dataPart,]
+dim(training)
+dim(testing)
+```
+
+Returns 13737 samples and 46 variables for training, and 5885 samples and 46 variables for testing.
+
+##Analysis
+###Regression Tree
+
+Fit a tree to this data, summarize and plot it.
+```{r}
+set.seed(12345)
+tree_training = tree(classe~.,data=training)
+summary(tree_training)
+plot(tree_training)
+text(tree_training,pretty=0, cex =.5)
+```
+
+The tree has an excess amount of branches that need to be pruned using "rpart" method.
+
+###Rpart method
+```{r}
+tree_prune <- train(classe ~ .,method="rpart",data=training)
+print(tree_prune$finalModel)
+```
+
+###Prettier plots
+```{r}
+fancyRpartPlot(tree_prune$finalModel)
+```
+
+The results are close to the "tree" package.
+
+###Cross Validation
+
+Use cross validation to check the performance of the tree.
+
+```{r}
+tree_predict = predict(tree_training,testing,type="class")
+pred_matrix = with(testing,table(tree_predict,classe))
+sum(diag(pred_matrix))/sum(as.vector(pred_matrix)) # error rate
+```
+This is not very accurate
+
+```{r}
+tree_predict = predict(tree_prune,testing)
+pred_matrix = with(testing,table(tree_predict,classe))
+sum(diag(pred_matrix))/sum(as.vector(pred_matrix)) # error rate
+```
+The result from the "caret" package is lower.
+
+###Pruning tree
+
+The tree is to large and requires cross validation to prune it.
+```{r}
+cv.training = cv.tree(tree_training,FUN=prune.misclass)
+cv.training
+```
+
+Evaluate pruned tree on test data.
+```{r}
+prune_training = prune.misclass(tree_training,best=18)
+tree_predict = predict(prune_training,testing,type="class")
+pre_matrix = with(testing,table(tree_predict,classe))
+sum(diag(pre_matrix))/sum(as.vector(pre_matrix)) # error rate
+```
+
+Pruning produces a lower result and gives us a simpler tree.
+
+Try Random Forest to improve accuracy.
+
+##Random Forests
+
+###Random Forests
+
+Use of random forests tends to build a lot of bushy trees. Then they are averaged to reduce the variance.
+```{r}
+require(randomForest)
+set.seed(12345)
+```
+
+Trying a random forest, to see how well it performs.
+```{r}
+training_ranForest = randomForest(classe~.,data=training,ntree=100, importance=TRUE)
+training_ranForest
+```
+
+###Out-of Sample Accuracy
+
+The model shows OOB estimate of .73% error rate.
+```{r}
+tree_predict = predict(training_ranForest,testing,type="class")
+pred_matrix = with(testing,table(tree_predict,classe))
+sum(diag(pred_matrix))/sum(as.vector(pred_matrix)) # error rate
+```
+
+0.99 means we got a very accurate estimate.
+
+##Conclusion
+Now we can predict the testing data from the website.
+```{r}
+answers <- predict(training_ranForest, testingOriginal)
+answers
+```
+Those answers are going to submit to website for grading. It shows that this random forest model did a good job.
